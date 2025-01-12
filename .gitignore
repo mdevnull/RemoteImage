@@ -1,0 +1,6 @@
+graphics/.godot
+graphics/*.tmp
+graphics/**/*.import
+graphics/*.dll
+graphics/*.dylib
+graphics/*.so
