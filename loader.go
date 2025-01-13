@@ -27,6 +27,8 @@ const (
 	formatBMP
 	formatWEBP
 	formatTIFF
+	formatSVG
+	formatTGA
 )
 
 // RemoteImageLoader is made available as the autoload node `RILoader`
@@ -67,15 +69,28 @@ func (ril *RemoteImageLoader) Process(delta Float.X) {
 		remoteImageIndex := ril.LoadingImages.Index(resourceUID)
 		imgResource := Image.New()
 
+		var err error = nil
 		switch result.format {
 		case formatUnknown:
 			panic("unknown image format")
 		case formatJPEG:
-			imgResource.LoadJpgFromBuffer(result.data)
+			err = imgResource.LoadJpgFromBuffer(result.data)
 		case formatPNG:
-			imgResource.LoadPngFromBuffer(result.data)
+			err = imgResource.LoadPngFromBuffer(result.data)
 		case formatWEBP:
-			imgResource.LoadWebpFromBuffer(result.data)
+			err = imgResource.LoadWebpFromBuffer(result.data)
+		case formatBMP:
+			err = imgResource.LoadBmpFromBuffer(result.data)
+		case formatSVG:
+			err = imgResource.LoadSvgFromBuffer(result.data)
+		case formatTGA:
+			err = imgResource.LoadTgaFromBuffer(result.data)
+		}
+
+		if err != nil {
+			fmt.Println(err)
+			imgResource.AsRefCounted()[0].Unreference()
+			continue
 		}
 
 		remoteImageIndex.Super().SetImage(imgResource)
@@ -155,7 +170,7 @@ func getTypeFromExtension(uri string) imageFormat {
 		return formatUnknown
 	}
 	extension := urlObj.Path[lastDotIndex+1:]
-	switch extension {
+	switch strings.ToLower(extension) {
 	case "png":
 		return formatPNG
 	case "jpg":
@@ -168,6 +183,14 @@ func getTypeFromExtension(uri string) imageFormat {
 		return formatTIFF
 	case "tiff":
 		return formatTIFF
+	case "bmp":
+		return formatBMP
+	case "svg":
+		return formatSVG
+	case "tga":
+		return formatTGA
+	case "tpic":
+		return formatTGA
 	default:
 		return formatUnknown
 	}
@@ -185,6 +208,14 @@ func getTypeFromHeader(headerStr string) imageFormat {
 		return formatWEBP
 	case "image/tiff":
 		return formatTIFF
+	case "image/svg+xml":
+		return formatSVG
+	case "image/svg":
+		return formatSVG
+	case "image/x-tga":
+		return formatTGA
+	case "image/x-targa":
+		return formatTGA
 	default:
 		return formatUnknown
 	}
