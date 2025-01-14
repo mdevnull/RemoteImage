@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -14,6 +17,8 @@ import (
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/OS"
+	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/variant/Dictionary"
 	"graphics.gd/variant/Float"
 )
@@ -40,6 +45,8 @@ type RemoteImageLoader struct {
 	nextLoadCnt         int
 	loadedImageDataLock sync.Mutex
 	loadedImageData     map[int]imageResult
+
+	cache remoteImageCache
 }
 
 type imageResult struct {
@@ -54,6 +61,24 @@ func (ril *RemoteImageLoader) Ready() {
 	ril.LoadingImages = Dictionary.New[int, *RemoteImageTexture]()
 	ril.loadedImageData = make(map[int]imageResult)
 	ril.loadedImageDataLock = sync.Mutex{}
+
+	switch getCacheSetting() {
+	case cacheSettingMemory:
+		ril.cache = newMemoryCache()
+	case cacheSettingFilsystem:
+		basePath := path.Join(OS.GetUserDataDir(), "RemoteImages")
+		_, err := os.Stat(basePath)
+		if err != nil {
+			if err := os.Mkdir(basePath, os.ModePerm); err != nil {
+				panic(fmt.Errorf("error creating cache base dir: %w", err))
+			}
+		}
+		ril.cache = &fileCache{
+			basePath: basePath,
+		}
+	default:
+		ril.cache = &noopCache{}
+	}
 }
 
 func (ril *RemoteImageLoader) Process(delta Float.X) {
@@ -96,9 +121,9 @@ func (ril *RemoteImageLoader) Process(delta Float.X) {
 		}
 
 		if err != nil {
-			remoteImage.emitError(fmt.Errorf("error loading from buffer ( format: %d ): %w", result.format, err))
-			imgResource.AsRefCounted()[0].Unreference()
-			continue
+			// remoteImage.emitError(fmt.Errorf("error loading from buffer ( format: %d ): %w", result.format, err))
+			// imgResource.AsRefCounted()[0].Unreference()
+			// continue
 		}
 
 		remoteImage.Super().SetImage(imgResource)
@@ -109,13 +134,21 @@ func (ril *RemoteImageLoader) Process(delta Float.X) {
 	}
 }
 
-func (ril *RemoteImageLoader) LoadRemoteImage(remoteImageRes *RemoteImageTexture) {
-	ril.LoadingImages.SetIndex(ril.nextLoadCnt, remoteImageRes)
+func (ril *RemoteImageLoader) LoadRemoteImage(remoteImageTexture *RemoteImageTexture) {
+	ril.LoadingImages.SetIndex(ril.nextLoadCnt, remoteImageTexture)
 
-	go ril.loadRemoteImage(
-		remoteImageRes.URL,
-		ril.nextLoadCnt,
-	)
+	cacheEntry, err := ril.cache.get(remoteImageTexture.URL)
+	if err != nil && err != errCacheMiss {
+		fmt.Printf("cache error: %s\n", err.Error())
+	}
+	if err == nil {
+		ril.setLoadResult(ril.nextLoadCnt, cacheEntry)
+	} else {
+		go ril.loadRemoteImage(
+			remoteImageTexture.URL,
+			ril.nextLoadCnt,
+		)
+	}
 
 	ril.nextLoadCnt += 1
 }
@@ -164,7 +197,13 @@ func (ril *RemoteImageLoader) loadRemoteImage(url string, uid int) {
 		}
 	}
 
-	ril.setLoadResult(uid, imageResult{nil, imgBytes, format})
+	imageRes := imageResult{nil, imgBytes, format}
+	err = ril.cache.set(url, imageRes)
+	if err != nil {
+		fmt.Printf("cache write error: %s", err.Error())
+	}
+
+	ril.setLoadResult(uid, imageRes)
 }
 
 func (ril *RemoteImageLoader) setLoadResult(uid int, res imageResult) {
@@ -249,4 +288,19 @@ func convertTiff(tiffData []byte) ([]byte, error) {
 	}
 
 	return jpegBuffer.Bytes(), nil
+}
+
+const (
+	cacheSettingNoop int = iota
+	cacheSettingMemory
+	cacheSettingFilsystem
+)
+
+func getCacheSetting() int {
+	settingVal := ProjectSettings.GetSetting("RemoteImage/General/Cache")
+	var cacheOption int
+	if settingVal != nil {
+		cacheOption, _ = strconv.Atoi(fmt.Sprintf("%v", settingVal))
+	}
+	return cacheOption
 }
