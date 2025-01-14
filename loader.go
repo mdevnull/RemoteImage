@@ -43,6 +43,7 @@ type RemoteImageLoader struct {
 }
 
 type imageResult struct {
+	err    error
 	data   []byte
 	format imageFormat
 }
@@ -66,13 +67,20 @@ func (ril *RemoteImageLoader) Process(delta Float.X) {
 	defer ril.loadedImageDataLock.Unlock()
 
 	for resourceUID, result := range ril.loadedImageData {
-		remoteImageIndex := ril.LoadingImages.Index(resourceUID)
+		remoteImage := ril.LoadingImages.Index(resourceUID)
+
+		if result.err != nil {
+			remoteImage.emitError(result.err)
+			continue
+		}
+
 		imgResource := Image.New()
 
 		var err error = nil
 		switch result.format {
 		case formatUnknown:
-			panic("unknown image format")
+			remoteImage.emitError(fmt.Errorf("error detecting image format"))
+			continue
 		case formatJPEG:
 			err = imgResource.LoadJpgFromBuffer(result.data)
 		case formatPNG:
@@ -88,12 +96,12 @@ func (ril *RemoteImageLoader) Process(delta Float.X) {
 		}
 
 		if err != nil {
-			fmt.Println(err)
+			remoteImage.emitError(fmt.Errorf("error loading from buffer ( format: %d ): %w", result.format, err))
 			imgResource.AsRefCounted()[0].Unreference()
 			continue
 		}
 
-		remoteImageIndex.Super().SetImage(imgResource)
+		remoteImage.Super().SetImage(imgResource)
 	}
 
 	for k := range ril.loadedImageData {
@@ -119,21 +127,24 @@ func (ril *RemoteImageLoader) loadRemoteImage(url string, uid int) {
 
 	resp, err := http.Get(url)
 	if err != nil {
-		panic(fmt.Sprintf("go dl error: %s\n", err.Error()))
+		ril.setLoadResult(uid, imageResult{fmt.Errorf("download error: %w", err), nil, formatUnknown})
 	}
 
 	if resp.StatusCode > 299 {
-		panic(fmt.Sprintf("go dl error: returned non 2XX code %d\n", resp.StatusCode))
+		ril.setLoadResult(uid, imageResult{fmt.Errorf("returned non 2XX code %d", resp.StatusCode), nil, formatUnknown})
+		return
 	}
 
 	imgBytes, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		panic(fmt.Sprintf("go read error: %s\n", err.Error()))
+		ril.setLoadResult(uid, imageResult{fmt.Errorf("read error: %w", err), nil, formatUnknown})
+		return
 	}
 
 	if len(imgBytes) <= 0 {
-		panic("go read error: empty response\n")
+		ril.setLoadResult(uid, imageResult{fmt.Errorf("empty server response"), nil, formatUnknown})
+		return
 	}
 
 	format := getTypeFromHeader(resp.Header.Get("content-type"))
@@ -147,14 +158,19 @@ func (ril *RemoteImageLoader) loadRemoteImage(url string, uid int) {
 			format = formatJPEG
 			imgBytes, err = convertTiff(imgBytes)
 			if err != nil {
-				panic(err)
+				ril.setLoadResult(uid, imageResult{fmt.Errorf("error converting tiff: %w", err), nil, formatUnknown})
+				return
 			}
 		}
 	}
 
+	ril.setLoadResult(uid, imageResult{nil, imgBytes, format})
+}
+
+func (ril *RemoteImageLoader) setLoadResult(uid int, res imageResult) {
 	ril.loadedImageDataLock.Lock()
 	defer ril.loadedImageDataLock.Unlock()
-	ril.loadedImageData[uid] = imageResult{imgBytes, format}
+	ril.loadedImageData[uid] = res
 }
 
 func getTypeFromExtension(uri string) imageFormat {

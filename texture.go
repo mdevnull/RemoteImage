@@ -22,6 +22,8 @@ type RemoteImageTexture struct {
 
 	URL           string             `gd:"image_url"`
 	FallbackImage Texture2D.Instance `gd:"fallback_image"`
+
+	ErrorSignal chan<- func() string `gd:"error"`
 }
 
 func (ri *RemoteImageTexture) OnCreate() {
@@ -57,5 +59,11 @@ func (ri *RemoteImageTexture) onURLChange() {
 				riLoader.LoadRemoteImage(ri)
 			}
 		}
+	}
+}
+
+func (ri *RemoteImageTexture) emitError(err error) {
+	ri.ErrorSignal <- func() string {
+		return err.Error()
 	}
 }
