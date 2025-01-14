@@ -21,6 +21,15 @@ The loader supports:
 * webp
 * tiff ( via conversion to jpeg )
 
+## Project Settings
+
+Make sure to toggle "Advanced Settings" to see the "Remote Image" Setting panel.
+
+|Setting|Description|
+|---|---|
+|Fallback Resource Path|Resource to use while the image is loading|
+|Cache|None - No cache<br/>Memory - Uses [ristretto](https://github.com/dgraph-io/ristretto) as an in-memory cache with a max memory size of 100MB<br/>Filesystem - Stores every image on disc in the godot user directory of the project.|
+
 ## Goals
 
 * gif support ( well ... it would be a lot smarter to expose a different resource - like https://github.com/BOTLANNER/godot-gif already does - with somethign based on AnimatedTexture but it also would be nice to not care and just have one remote resource that "just works" with any URL so maybe everything is based on AnimatedTexture instead of ImageTexture? Idk )
